@@ -1,153 +1,389 @@
-
 import streamlit as st
 import pandas as pd
 import numpy as np
 import time
 from datetime import datetime
 
-st.set_page_config(page_title="ALS Live Algo", page_icon="📈", layout="wide")
+# Groww API
+try:
+    from growwapi import GrowwAPI
+    GROWW_AVAILABLE = True
+except Exception:
+    GROWW_AVAILABLE = False
 
-st.title("📈 ALS Live Algo — Paper Trading")
-st.caption("Live-signal dashboard • Paper trading • Replace demo feed with an authorized broker/data API")
 
-# Sidebar
+st.set_page_config(
+    page_title="ALS Live Algo",
+    page_icon="📈",
+    layout="wide"
+)
+
+st.title("📈 ALS Live Algo – Groww Live Data")
+st.caption("Groww live market data • Paper Trading only")
+
+
+# ---------------------------------------------------------
+# SIDEBAR
+# ---------------------------------------------------------
 st.sidebar.header("Settings")
-symbol = st.sidebar.selectbox("Instrument", ["NIFTY", "SENSEX"])
-refresh = st.sidebar.slider("Refresh seconds", 1, 30, 5)
-ema_fast = st.sidebar.number_input("Fast EMA", 5, 50, 9)
-ema_slow = st.sidebar.number_input("Slow EMA", 10, 100, 21)
-st_period = st.sidebar.number_input("Supertrend period", 5, 50, 10)
-st_mult = st.sidebar.number_input("Supertrend multiplier", 1.0, 6.0, 3.0, 0.5)
 
-# Demo feed: deterministic-ish synthetic candles. Replace get_demo_data() with broker API.
-@st.cache_data(ttl=1)
-def get_demo_data(symbol):
-    rng = np.random.default_rng(int(time.time()) // 5)
-    n = 180
-    base = 25500 if symbol == "NIFTY" else 83000
-    rets = rng.normal(0.0001, 0.0025, n)
-    close = base * np.cumprod(1 + rets)
-    open_ = np.r_[close[0], close[:-1]]
-    high = np.maximum(open_, close) * (1 + rng.uniform(0, .0012, n))
-    low = np.minimum(open_, close) * (1 - rng.uniform(0, .0012, n))
-    volume = rng.integers(100_000, 900_000, n)
-    return pd.DataFrame({"open":open_, "high":high, "low":low, "close":close, "volume":volume})
+symbol_name = st.sidebar.selectbox(
+    "Instrument",
+    ["NIFTY", "SENSEX"]
+)
 
-def supertrend(df, period=10, mult=3):
-    tr = pd.concat([
-        df.high-df.low,
-        (df.high-df.close.shift()).abs(),
-        (df.low-df.close.shift()).abs()
-    ], axis=1).max(axis=1)
-    atr = tr.ewm(alpha=1/period, adjust=False).mean()
-    hl2 = (df.high+df.low)/2
-    upper = hl2 + mult*atr
-    lower = hl2 - mult*atr
-    direction = pd.Series(1, index=df.index)
-    line = lower.copy()
-    for i in range(1, len(df)):
-        if df.close.iloc[i] > upper.iloc[i-1]:
-            direction.iloc[i] = 1
-        elif df.close.iloc[i] < lower.iloc[i-1]:
-            direction.iloc[i] = -1
-        else:
-            direction.iloc[i] = direction.iloc[i-1]
-        if direction.iloc[i] == 1:
-            line.iloc[i] = max(lower.iloc[i], line.iloc[i-1])
-        else:
-            line.iloc[i] = min(upper.iloc[i], line.iloc[i-1])
-    return line, direction
+refresh = st.sidebar.slider(
+    "Refresh seconds",
+    min_value=5,
+    max_value=60,
+    value=10
+)
 
-def psar(df, step=.02, max_step=.2):
-    h,l = df.high.to_numpy(), df.low.to_numpy()
-    s = np.zeros(len(df)); s[0]=l[0]
-    bull=True; af=step; ep=h[0]
-    for i in range(1,len(df)):
-        s[i]=s[i-1]+af*(ep-s[i-1])
-        if bull:
-            s[i]=min(s[i],l[i-1],l[i-2] if i>1 else l[i-1])
-            if l[i]<s[i]:
-                bull=False; s[i]=ep; ep=l[i]; af=step
-            elif h[i]>ep:
-                ep=h[i]; af=min(max_step,af+step)
-        else:
-            s[i]=max(s[i],h[i-1],h[i-2] if i>1 else h[i-1])
-            if h[i]>s[i]:
-                bull=True; s[i]=ep; ep=h[i]; af=step
-            elif l[i]<ep:
-                ep=l[i]; af=min(max_step,af+step)
-    return pd.Series(s,index=df.index)
+ema_fast = st.sidebar.number_input(
+    "Fast EMA",
+    min_value=2,
+    max_value=100,
+    value=9
+)
 
-df=get_demo_data(symbol)
-df["ema_fast"]=df.close.ewm(span=ema_fast,adjust=False).mean()
-df["ema_slow"]=df.close.ewm(span=ema_slow,adjust=False).mean()
-df["ma"]=np.where(df.ema_fast>df.ema_slow,1,-1)
-df["st"],df["st_dir"]=supertrend(df,st_period,st_mult)
-df["psar"]=psar(df)
-df["psar_dir"]=np.where(df.close>df.psar,1,-1)
-df["score"]=df.ma+df.st_dir+df.psar_dir
-df["signal"]=np.select([df.score>=2,df.score<=-2],["BUY","SELL"],default="WAIT")
+ema_slow = st.sidebar.number_input(
+    "Slow EMA",
+    min_value=3,
+    max_value=200,
+    value=21
+)
 
-last=df.iloc[-1]
-price=float(last.close)
-signal=last.signal
+st_period = st.sidebar.number_input(
+    "Supertrend Period",
+    min_value=2,
+    max_value=100,
+    value=10
+)
 
-# Header metrics
-a,b,c,d,e=st.columns(5)
-a.metric(symbol, f"₹{price:,.2f}")
-b.metric("Signal", signal)
-c.metric("Supertrend", "BUY" if last.st_dir==1 else "SELL")
-d.metric("Moving Avg", "BUY" if last.ma==1 else "SELL")
-e.metric("Parabolic", "BUY" if last.psar_dir==1 else "SELL")
+st_mult = st.sidebar.number_input(
+    "Supertrend Multiplier",
+    min_value=0.5,
+    max_value=10.0,
+    value=3.0
+)
 
-st.divider()
 
-left,right=st.columns([2,1])
-with left:
-    st.subheader("📊 Live Signal Chart")
-    chart=df.tail(100)[["close","ema_fast","ema_slow","st","psar"]]
-    st.line_chart(chart)
-    st.subheader("Recent candles")
-    st.dataframe(df.tail(15)[["open","high","low","close","volume","score","signal"]],use_container_width=True)
+# ---------------------------------------------------------
+# GROW API CONNECTION
+# ---------------------------------------------------------
+if "GROWW_ACCESS_TOKEN" not in st.secrets:
 
-with right:
-    st.subheader("🎯 Trade Plan")
-    if signal=="BUY":
-        option="ATM / near-ATM CE"
-        sl=price*0.99; target=price*1.02
-    elif signal=="SELL":
-        option="ATM / near-ATM PE"
-        sl=price*1.01; target=price*0.98
-    else:
-        option="WAIT"
-        sl=target=price
-    st.metric("Direction", signal)
-    st.write("**Option bias:**", option)
-    st.write(f"**Underlying entry:** ₹{price:,.2f}")
-    st.write(f"**Underlying SL:** ₹{sl:,.2f}")
-    st.write(f"**Underlying target:** ₹{target:,.2f}")
-    st.info("This is a paper-trading signal, not investment advice.")
+    st.error("❌ Groww Access Token not found.")
 
-st.subheader("🧪 Paper Trade Log")
-if "trades" not in st.session_state:
-    st.session_state.trades=[]
-if st.button("Record current signal"):
-    st.session_state.trades.append({
-        "Time":datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "Symbol":symbol,"Price":round(price,2),"Signal":signal,
-        "Strategy score":int(last.score)
-    })
-if st.session_state.trades:
-    st.dataframe(pd.DataFrame(st.session_state.trades),use_container_width=True)
+    st.info(
+        "Streamlit → Settings → Secrets માં "
+        "GROWW_ACCESS_TOKEN save કરો."
+    )
+
+    st.stop()
+
+
+if not GROWW_AVAILABLE:
+    st.error("❌ growwapi package મળ્યું નથી.")
+    st.info("requirements.txt માં growwapi add કરવું પડશે.")
+    st.stop()
+
+
+try:
+    groww = GrowwAPI(
+        st.secrets["GROWW_ACCESS_TOKEN"]
+    )
+except Exception as e:
+
+    st.error("❌ Groww API initialize થઈ શક્યું નથી.")
+    st.code(str(e))
+    st.stop()
+
+
+# ---------------------------------------------------------
+# SYMBOL
+# ---------------------------------------------------------
+if symbol_name == "NIFTY":
+    exchange_symbol = "NSE_NIFTY"
 else:
-    st.caption("No paper trades recorded yet.")
+    exchange_symbol = "BSE_SENSEX"
 
+
+# ---------------------------------------------------------
+# GET LIVE LTP
+# ---------------------------------------------------------
+def get_live_price():
+
+    response = groww.get_ltp(
+        segment=groww.SEGMENT_CASH,
+        exchange_trading_symbols=exchange_symbol
+    )
+
+    if isinstance(response, dict):
+
+        if exchange_symbol in response:
+            return float(response[exchange_symbol])
+
+        if "ltp" in response:
+            return float(response["ltp"])
+
+        if "payload" in response:
+            payload = response["payload"]
+
+            if exchange_symbol in payload:
+                return float(payload[exchange_symbol])
+
+    raise Exception(
+        f"Unexpected Groww response: {response}"
+    )
+
+
+# ---------------------------------------------------------
+# LIVE PRICE
+# ---------------------------------------------------------
+try:
+
+    live_price = get_live_price()
+
+    st.success("🟢 Groww API Connected")
+
+except Exception as e:
+
+    st.error("🔴 Groww Live Data Error")
+
+    st.code(str(e))
+
+    st.warning(
+        "જો Free Trial માં Live Data access ન હોય "
+        "તો Groww API plan upgrade કરવો પડી શકે."
+    )
+
+    st.stop()
+
+
+# ---------------------------------------------------------
+# STORE LIVE PRICES
+# ---------------------------------------------------------
+if "price_history" not in st.session_state:
+    st.session_state.price_history = []
+
+
+now = datetime.now()
+
+st.session_state.price_history.append({
+    "time": now,
+    "price": live_price
+})
+
+# Keep last 500 observations
+st.session_state.price_history = (
+    st.session_state.price_history[-500:]
+)
+
+
+df = pd.DataFrame(
+    st.session_state.price_history
+)
+
+
+# ---------------------------------------------------------
+# BASIC LIVE DATA
+# ---------------------------------------------------------
+col1, col2, col3 = st.columns(3)
+
+with col1:
+    st.metric(
+        f"{symbol_name} Live Price",
+        f"₹{live_price:,.2f}"
+    )
+
+with col2:
+    st.metric(
+        "Data Points",
+        len(df)
+    )
+
+with col3:
+    st.metric(
+        "Last Update",
+        now.strftime("%H:%M:%S")
+    )
+
+
+# ---------------------------------------------------------
+# PRICE CHART
+# ---------------------------------------------------------
+st.subheader("📊 Live Price")
+
+if len(df) > 1:
+
+    chart_df = df.set_index("time")[["price"]]
+
+    st.line_chart(chart_df)
+
+else:
+
+    st.info(
+        "Live price collection શરૂ થઈ રહી છે..."
+    )
+
+
+# ---------------------------------------------------------
+# EMA
+# ---------------------------------------------------------
+if len(df) >= ema_slow:
+
+    df["EMA_FAST"] = (
+        df["price"]
+        .ewm(span=ema_fast, adjust=False)
+        .mean()
+    )
+
+    df["EMA_SLOW"] = (
+        df["price"]
+        .ewm(span=ema_slow, adjust=False)
+        .mean()
+    )
+
+    ema_fast_value = df["EMA_FAST"].iloc[-1]
+    ema_slow_value = df["EMA_SLOW"].iloc[-1]
+
+    if ema_fast_value > ema_slow_value:
+        ma_signal = "BUY"
+    elif ema_fast_value < ema_slow_value:
+        ma_signal = "SELL"
+    else:
+        ma_signal = "WAIT"
+
+else:
+
+    ma_signal = "WAIT"
+
+
+# ---------------------------------------------------------
+# SIMPLE LIVE MOMENTUM
+# ---------------------------------------------------------
+if len(df) >= 2:
+
+    previous_price = df["price"].iloc[-2]
+
+    if live_price > previous_price:
+        momentum_signal = "BUY"
+
+    elif live_price < previous_price:
+        momentum_signal = "SELL"
+
+    else:
+        momentum_signal = "WAIT"
+
+else:
+
+    momentum_signal = "WAIT"
+
+
+# ---------------------------------------------------------
+# COMBINED SIGNAL
+# ---------------------------------------------------------
+if ma_signal == "BUY" and momentum_signal == "BUY":
+
+    final_signal = "BUY"
+
+elif ma_signal == "SELL" and momentum_signal == "SELL":
+
+    final_signal = "SELL"
+
+else:
+
+    final_signal = "WAIT"
+
+
+# ---------------------------------------------------------
+# SIGNAL DISPLAY
+# ---------------------------------------------------------
+st.subheader("🎯 ALS Signal")
+
+c1, c2, c3 = st.columns(3)
+
+with c1:
+    st.metric(
+        "Moving Average",
+        ma_signal
+    )
+
+with c2:
+    st.metric(
+        "Momentum",
+        momentum_signal
+    )
+
+with c3:
+    st.metric(
+        "FINAL SIGNAL",
+        final_signal
+    )
+
+
+# ---------------------------------------------------------
+# PAPER TRADE PLAN
+# ---------------------------------------------------------
+st.subheader("📋 Paper Trade Plan")
+
+if final_signal == "BUY":
+
+    entry = live_price
+    stop_loss = live_price * 0.995
+    target = live_price * 1.01
+
+    st.success("🟢 BUY")
+
+    p1, p2, p3 = st.columns(3)
+
+    p1.metric("Entry", f"₹{entry:,.2f}")
+    p2.metric("Stop Loss", f"₹{stop_loss:,.2f}")
+    p3.metric("Target", f"₹{target:,.2f}")
+
+
+elif final_signal == "SELL":
+
+    entry = live_price
+    stop_loss = live_price * 1.005
+    target = live_price * 0.99
+
+    st.error("🔴 SELL")
+
+    p1, p2, p3 = st.columns(3)
+
+    p1.metric("Entry", f"₹{entry:,.2f}")
+    p2.metric("Stop Loss", f"₹{stop_loss:,.2f}")
+    p3.metric("Target", f"₹{target:,.2f}")
+
+
+else:
+
+    st.warning("🟡 WAIT")
+
+    st.write(
+        "બંને મુખ્ય signals agree થાય ત્યાં સુધી trade નહીં."
+    )
+
+
+# ---------------------------------------------------------
+# IMPORTANT NOTE
+# ---------------------------------------------------------
 st.divider()
-st.subheader("🔌 Next step: real-time data")
-st.write("""
-To turn this into a genuine live-market application, replace the demo data function with an
-authorized broker/market-data API. Then add option-chain/OI, alerts, authentication, backtesting,
-and (only after testing) optional broker order execution.
-""")
 
-st.caption("Note: JSK and Optima from the reference screenshot are not reproduced because their exact proprietary rules are unknown.")
+st.info(
+    "⚠️ આ version Paper Trading માટે છે. "
+    "કોઈ real order automatically place કરતું નથી."
+)
+
+st.caption(
+    "Groww Access Token daily 6:00 AM પર expire થાય છે."
+)
+
+
+# ---------------------------------------------------------
+# AUTO REFRESH
+# ---------------------------------------------------------
+time.sleep(refresh)
+st.rerun()
