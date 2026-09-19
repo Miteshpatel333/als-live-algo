@@ -99,15 +99,19 @@ def backtest(d, mode, capital=100000, risk=0.5, rr=2.0, sl_atr=1.5, maxtrades=2,
             pos={"side":sig,"entry":entry,"sl":sl,"target":target,"qty":qty,
                  "entry_time":r.datetime,"score":score,"risk_dist":dist,"mode":mode}
             daytrades[day]+=1
-        mark=cash+(float(r.close)-pos["entry"])*pos["qty"]*(1 if pos and pos["side"]=="BUY" else -1 if pos else 0)
-        peak=max(peak,mark); maxdd=max(maxdd,(peak-mark)/peak*100 if peak else 0)
+        mark=cash
+        if pos is not None:
+            direction = 1 if pos["side"]=="BUY" else -1
+            mark += (float(r.close)-pos["entry"])*pos["qty"]*direction
+        peak=max(peak,mark)
+        maxdd=max(maxdd,(peak-mark)/peak*100 if peak else 0)
         eq.append({"datetime":r.datetime,"equity":mark})
     t=pd.DataFrame(trades); grossp=t.loc[t.pnl>0,"pnl"].sum() if len(t) else 0; grossl=-t.loc[t.pnl<0,"pnl"].sum() if len(t) else 0
     pf=grossp/grossl if grossl else (np.inf if grossp else 0)
     wr=(t.pnl>0).mean()*100 if len(t) else 0
     return t,pd.DataFrame(eq),cash,{"P&L":cash-capital,"Trades":len(t),"Win Rate %":wr,"Profit Factor":pf,"Expectancy":t.pnl.mean() if len(t) else 0,"Max DD %":maxdd}
 
-st.title("🤖 ALS AI Algo Trading V7")
+st.title("🤖 ALS AI Algo Trading V8")
 st.caption("Strategy research engine • Trend / Pullback / Momentum • Walk-forward validation • Paper trading only")
 
 with st.sidebar:
@@ -119,9 +123,9 @@ with st.sidebar:
     sl_atr=st.slider("Initial SL (ATR)",1.0,2.5,1.5,0.25)
     maxtrades=st.slider("Max trades/day",1,4,2)
 
-st.info("V7 compares three rule families and validates the selected family on later candles. Costs and slippage are simulated. A positive backtest is not a guarantee of future profit.")
+st.info("V8 compares three rule families and validates the selected family on later candles. Costs and slippage are simulated. A positive backtest is not a guarantee of future profit.")
 
-if st.button("🚀 Run V7 Walk-Forward Test",type="primary"):
+if st.button("🚀 Run V8 Walk-Forward Test",type="primary"):
     rows=[]; details={}
     progress=st.progress(0)
     for ix,(name,ticker) in enumerate(SYMBOLS.items(),1):
@@ -163,8 +167,8 @@ if st.button("🚀 Run V7 Walk-Forward Test",type="primary"):
         st.line_chart(e.set_index("datetime")[["equity"]])
         st.dataframe(t,use_container_width=True)
         if len(t):
-            st.download_button(f"Download {name} V7 trades",t.to_csv(index=False),
-                               f"{name.lower().replace(' ','_')}_v7_trades.csv","text/csv",key=f"dl_{name}")
+            st.download_button(f"Download {name} V8 trades",t.to_csv(index=False),
+                               f"{name.lower().replace(' ','_')}_v8_trades.csv","text/csv",key=f"dl_{name}")
 
 st.divider()
 st.caption("Research/paper-trading only. Strategy selection is mechanical; no profitability or future-performance guarantee.")
