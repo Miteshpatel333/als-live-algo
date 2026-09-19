@@ -3,7 +3,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 
-st.set_page_config(page_title="ALS AI Algo Trading V14.1", page_icon="🤖", layout="wide")
+st.set_page_config(page_title="ALS AI Algo Trading V14.2", page_icon="🤖", layout="wide")
 
 SYMBOLS={"NIFTY":"^NSEI","BANK NIFTY":"^NSEBANK","SENSEX":"^BSESN"}
 
@@ -140,6 +140,14 @@ def normalize_option_df(df):
         "optiontype":"option_type"
     }
     x=x.rename(columns={c:aliases.get(c,c) for c in x.columns})
+    # NSE exports can contain both Close and LTP. Both normalize to "close";
+    # collapse duplicate column names safely before numeric conversion.
+    if x.columns.duplicated().any():
+        merged=pd.DataFrame(index=x.index)
+        for name in pd.unique(x.columns):
+            same=x.loc[:, x.columns==name]
+            merged[name]=same.bfill(axis=1).iloc[:,0] if same.shape[1]>1 else same.iloc[:,0]
+        x=merged
     required=["datetime","expiry","strike","option_type","close"]
     missing=[c for c in required if c not in x.columns]
     if missing: return pd.DataFrame(), missing
@@ -190,7 +198,7 @@ def get_price(chain, opt_type, strike):
     if len(z)==0: return np.nan
     return float(z.iloc[-1].close)
 
-st.title("🤖 ALS AI Algo Trading V14.1")
+st.title("🤖 ALS AI Algo Trading V14.2")
 st.caption("Index research + Option Strategy Lab • backtest/paper research only • live orders disabled")
 
 tab1,tab2=st.tabs(["📊 Index Research","🧩 Option Strategy Lab"])
@@ -205,7 +213,7 @@ with tab1:
         maxtrades=st.slider("Max trades/day",1,3,2)
         cost=st.number_input("Cost per completed trade (₹)",0,200,20,5)
         slip=st.number_input("Slippage (bps)",0,10,2,1)
-    st.info("V14.1 keeps the V12 robustness gate. A PASS requires positive out-of-sample expectancy, PF > 1, at least 3 unseen trades, and max DD < 5%.")
+    st.info("V14.2 keeps the V12 robustness gate. A PASS requires positive out-of-sample expectancy, PF > 1, at least 3 unseen trades, and max DD < 5%.")
     if st.button("🚀 Run V14 Index Research",type="primary"):
         all_rows=[]; chosen={}; progress=st.progress(0); families=["TREND","PULLBACK","MOMENTUM","BREAKOUT"]
         for i,(name,ticker) in enumerate(SYMBOLS.items(),1):
@@ -245,7 +253,7 @@ with tab1:
             if len(e): st.line_chart(e.set_index("datetime")[["equity"]])
 
 with tab2:
-    st.warning("Option Strategy Lab is research/paper testing only. V14.1 adds an NSE contract-data import workflow. The four modules are transparent research templates inspired by the named educational topics; they are NOT claimed to reproduce every rule from the videos verbatim.")
+    st.warning("Option Strategy Lab is research/paper testing only. V14.2 adds an NSE contract-data import workflow. The four modules are transparent research templates inspired by the named educational topics; they are NOT claimed to reproduce every rule from the videos verbatim.")
     st.markdown("### Strategy Library")
     strategy=st.selectbox("Select strategy",[
         "Mukul — Short Straddle",
