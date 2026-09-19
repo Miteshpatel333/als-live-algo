@@ -3,7 +3,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 
-st.set_page_config(page_title="ALS AI Algo Trading V14.2", page_icon="🤖", layout="wide")
+st.set_page_config(page_title="ALS AI Algo Trading V14.3", page_icon="🤖", layout="wide")
 
 SYMBOLS={"NIFTY":"^NSEI","BANK NIFTY":"^NSEBANK","SENSEX":"^BSESN"}
 
@@ -198,7 +198,7 @@ def get_price(chain, opt_type, strike):
     if len(z)==0: return np.nan
     return float(z.iloc[-1].close)
 
-st.title("🤖 ALS AI Algo Trading V14.2")
+st.title("🤖 ALS AI Algo Trading V14.3")
 st.caption("Index research + Option Strategy Lab • backtest/paper research only • live orders disabled")
 
 tab1,tab2=st.tabs(["📊 Index Research","🧩 Option Strategy Lab"])
@@ -213,7 +213,7 @@ with tab1:
         maxtrades=st.slider("Max trades/day",1,3,2)
         cost=st.number_input("Cost per completed trade (₹)",0,200,20,5)
         slip=st.number_input("Slippage (bps)",0,10,2,1)
-    st.info("V14.2 keeps the V12 robustness gate. A PASS requires positive out-of-sample expectancy, PF > 1, at least 3 unseen trades, and max DD < 5%.")
+    st.info("V14.3 keeps the V12 robustness gate. A PASS requires positive out-of-sample expectancy, PF > 1, at least 3 unseen trades, and max DD < 5%.")
     if st.button("🚀 Run V14 Index Research",type="primary"):
         all_rows=[]; chosen={}; progress=st.progress(0); families=["TREND","PULLBACK","MOMENTUM","BREAKOUT"]
         for i,(name,ticker) in enumerate(SYMBOLS.items(),1):
@@ -253,7 +253,8 @@ with tab1:
             if len(e): st.line_chart(e.set_index("datetime")[["equity"]])
 
 with tab2:
-    st.warning("Option Strategy Lab is research/paper testing only. V14.2 adds an NSE contract-data import workflow. The four modules are transparent research templates inspired by the named educational topics; they are NOT claimed to reproduce every rule from the videos verbatim.")
+    st.warning("Option Strategy Lab is research/paper testing only. V14.3 adds paired CE+PE analysis for an actual historical short-straddle mark-to-market. Live orders remain disabled.")
+
     st.markdown("### Strategy Library")
     strategy=st.selectbox("Select strategy",[
         "Mukul — Short Straddle",
@@ -262,7 +263,7 @@ with tab2:
         "Pushkar — Indicator Scalping"
     ])
     desc={
-        "Mukul — Short Straddle":"ATM CE + ATM PE short template. Requires real historical option premiums, expiry and costs to backtest.",
+        "Mukul — Short Straddle":"Paired ATM CE + ATM PE short template. V14.3 can calculate a paired daily mark-to-market when both CE and PE contract files are uploaded.",
         "Mukul — Bull Call Spread":"Buy ATM CE + sell a higher-strike CE. Defined-risk debit spread template.",
         "Pushkar — Option Chain":"Uses CE/PE OI and volume fields as a transparent support/resistance proxy; not a claim of exact video-rule reproduction.",
         "Pushkar — Indicator Scalping":"Directional option-buying template; underlying indicator confirmation is required before treating a signal as executable."
@@ -270,82 +271,115 @@ with tab2:
     st.info(desc[strategy])
 
     st.markdown("### 1) Historical option data")
-    st.markdown("### NSE historical contract data")
-    st.write("NSE provides a Historical Contract-wise Price Volume Data report with filters for Instrument, Symbol, Year, Expiry, Option Type and Strike Price, plus CSV download. V14 is designed around that contract-level data. citeturn0search1")
-    st.markdown("**NSE workflow:** Historical Contract-wise Price Volume Data → Instrument: Options → Symbol: NIFTY → choose Year/Expiry/Option Type/Strike → download CSV. The app then normalizes the downloaded file.")
-    st.markdown("NSE also exposes current option-chain CSV downloads, but current-chain data is not a substitute for historical contract prices when doing a backtest. citeturn0search3")
-    st.download_button("⬇️ Download normalized CSV template",option_template().to_csv(index=False),"option_data_template_v14_1.csv","text/csv")
-    uploaded=st.file_uploader("Upload NSE contract-wise CSV (or normalized CSV)",type=["csv"])
-    if uploaded:
-        raw=pd.read_csv(uploaded)
-        opt,missing=normalize_option_df(raw)
-        if missing:
-            st.error("Missing required columns: "+", ".join(missing))
-        elif opt.empty:
-            st.error("No usable CE/PE rows found.")
+    st.write("Upload the NSE contract-wise CSV files. For the Short Straddle module, upload both the matching CE and PE files for the same symbol, strike and expiry.")
+    ce_file=st.file_uploader("Upload NSE CE CSV",type=["csv"],key="ce_v143")
+    pe_file=st.file_uploader("Upload matching NSE PE CSV",type=["csv"],key="pe_v143")
+
+    def normalize_nse(df):
+        x=df.copy()
+        x.columns=[str(c).strip().lower().replace(" ","_") for c in x.columns]
+        # Remove duplicate column names safely (NSE can expose both Close/LTP variants).
+        x=x.loc[:,~x.columns.duplicated()].copy()
+        aliases={
+            "date":"datetime","expiry":"expiry","option_type":"option_type",
+            "strike_price":"strike","underlying_value":"spot",
+            "open_int":"oi","settle_price":"settle_price",
+            "close":"close","ltp":"ltp","open":"open","high":"high","low":"low",
+            "symbol":"symbol"
+        }
+        x=x.rename(columns={c:aliases.get(c,c) for c in x.columns})
+        required=["datetime","expiry","strike","option_type","close","settle_price"]
+        missing=[c for c in required if c not in x.columns]
+        if missing: return pd.DataFrame(),missing
+        x["datetime"]=pd.to_datetime(x["datetime"],errors="coerce")
+        x["expiry"]=pd.to_datetime(x["expiry"],errors="coerce")
+        x["strike"]=pd.to_numeric(x["strike"],errors="coerce")
+        x["option_type"]=x["option_type"].astype(str).str.upper().str.strip().replace({"CALL":"CE","PUT":"PE"})
+        for c in ["open","high","low","close","ltp","settle_price","volume","oi","spot"]:
+            if c not in x: x[c]=np.nan
+            x[c]=pd.to_numeric(x[c].replace("-",np.nan),errors="coerce")
+        x=x.dropna(subset=["datetime","expiry","strike","option_type"])
+        x=x[x.option_type.isin(["CE","PE"])].sort_values("datetime").reset_index(drop=True)
+        # For NSE rows with no traded OHLC, use settlement price as the daily mark.
+        x["mark"]=x["close"].where(x["close"].notna() & (x["close"]!=1089.75),x["settle_price"])
+        return x,[]
+
+    ce=None; pe=None
+    if ce_file:
+        raw=pd.read_csv(ce_file); ce,miss=normalize_nse(raw)
+        if miss: st.error("CE file missing: "+", ".join(miss))
+        else: st.success(f"CE loaded: {len(ce):,} rows")
+    if pe_file:
+        raw=pd.read_csv(pe_file); pe,miss=normalize_nse(raw)
+        if miss: st.error("PE file missing: "+", ".join(miss))
+        else: st.success(f"PE loaded: {len(pe):,} rows")
+
+    if ce is not None and pe is not None and len(ce) and len(pe):
+        st.markdown("### 2) Contract match")
+        ce_key=ce.iloc[0]; pe_key=pe.iloc[0]
+        same_symbol=str(ce_key.get("symbol",""))==str(pe_key.get("symbol",""))
+        same_strike=float(ce_key["strike"])==float(pe_key["strike"])
+        same_expiry=pd.Timestamp(ce_key["expiry"])==pd.Timestamp(pe_key["expiry"])
+        c1,c2,c3,c4=st.columns(4)
+        c1.metric("CE rows",len(ce)); c2.metric("PE rows",len(pe))
+        c3.metric("Strike",f"{ce_key['strike']:.0f}"); c4.metric("Expiry",pd.Timestamp(ce_key["expiry"]).strftime("%d-%b-%Y"))
+        if not (same_symbol and same_strike and same_expiry):
+            st.error("CE and PE files do not match on symbol/strike/expiry.")
         else:
-            st.success(f"Loaded {len(opt):,} option rows. V14 will use actual contract premium/close, expiry, strike and CE/PE fields for research.")
+            st.success("CE + PE contract match confirmed.")
+            merged=ce[["datetime","expiry","strike","spot","mark","close","settle_price","oi"]].rename(
+                columns={"mark":"ce_mark","close":"ce_close","settle_price":"ce_settle","oi":"ce_oi"}
+            ).merge(
+                pe[["datetime","expiry","strike","spot","mark","close","settle_price","oi"]].rename(
+                    columns={"mark":"pe_mark","close":"pe_close","settle_price":"pe_settle","oi":"pe_oi"}
+                ),
+                on=["datetime","expiry","strike"],how="inner"
+            ).sort_values("datetime").reset_index(drop=True)
+            merged["spot"]=merged["spot_x"].combine_first(merged["spot_y"])
+            merged["straddle_mark"]=merged.ce_mark+merged.pe_mark
+            merged["straddle_close"]=merged.ce_close+merged.pe_close
+            st.markdown("### 3) Short Straddle backtest")
             c1,c2,c3=st.columns(3)
-            c1.metric("Rows",f"{len(opt):,}")
-            c2.metric("Dates",f"{opt.datetime.dt.date.nunique():,}")
-            c3.metric("Expiries",f"{opt.expiry.dt.date.nunique():,}")
-            st.dataframe(opt.head(100),use_container_width=True)
-
-            st.markdown("### 2) Research controls")
-            strike_step=st.number_input("Strike step",1,1000,50,1)
-            lot_size=st.number_input("Lot size",1,1000,65,1)
-            capital_opt=st.number_input("Option research capital (₹)",10000,10000000,100000,10000)
-            max_loss=st.slider("Max loss budget / trade (%)",0.25,5.0,1.0,0.25)
-            entry_time=st.time_input("Paper entry time")
-            st.caption("For exact historical testing, the uploaded file must contain the actual contract premium at each timestamp. Underlying-only data cannot produce a genuine option P&L.")
-
-            if st.button("🧪 Generate Option Strategy Signals",type="primary"):
-                rows=[]
-                for dt,grp in opt.groupby("datetime"):
-                    spot=np.nan
-                    # If an underlying spot column exists, use it; otherwise ATM is derived from strikes.
-                    if "spot" in grp.columns:
-                        spot=pd.to_numeric(grp["spot"],errors="coerce").dropna()
-                        spot=float(spot.iloc[-1]) if len(spot) else np.nan
-                    if pd.isna(spot): spot=float(grp["strike"].median())
-                    sig=option_strategy_signal(grp,strategy,spot,strike_step)
-                    if sig:
-                        legs=[]
-                        valid=True
-                        for typ,k,qty in sig["legs"]:
-                            px=get_price(grp,typ,k)
-                            if pd.isna(px): valid=False
-                            legs.append((typ,k,qty,px))
-                        if valid:
-                            debit_credit=sum(q*px for _,_,q,px in legs)
-                            rows.append({"datetime":dt,"spot_proxy":spot,"structure":sig["structure"],
-                                         "reason":sig["reason"],"legs":str(legs),
-                                         "net_premium_per_unit":debit_credit,
-                                         "gross_premium_x_lot":debit_credit*lot_size})
-                out=pd.DataFrame(rows)
-                if out.empty:
-                    st.warning("No complete signals found in the uploaded data.")
+            capital=st.number_input("Research capital (₹)",10000,10000000,100000,10000,key="ss_cap")
+            lot_size=st.number_input("NIFTY lot size",1,1000,65,1,key="ss_lot")
+            cost=st.number_input("Brokerage + charges per round trip (₹)",0,5000,100,10,key="ss_cost")
+            slip=st.number_input("Slippage per leg (₹)",0.0,20.0,1.0,0.5,key="ss_slip")
+            st.caption("Daily mark uses traded Close where available; if NSE provides no traded OHLC and the file contains the placeholder 1089.75, V14.3 falls back to Settlement Price. This avoids treating the placeholder as a real market quote.")
+            if st.button("🧪 Run Short Straddle Backtest",type="primary",key="run_ss"):
+                entry_date=pd.Timestamp(merged.datetime.min())
+                exit_date=pd.Timestamp(merged.datetime.max())
+                entry=float(merged.iloc[0].straddle_mark)
+                exitv=float(merged.iloc[-1].straddle_mark)
+                gross=(entry-exitv)*lot_size
+                net=gross-cost-2*slip*lot_size
+                peak=entry
+                max_loss=0.0
+                curve=[]
+                for _,r in merged.iterrows():
+                    pnl=(entry-float(r.straddle_mark))*lot_size
+                    curve.append({"datetime":r.datetime,"pnl":pnl})
+                    adverse=(float(r.straddle_mark)-entry)*lot_size
+                    max_loss=max(max_loss,adverse)
+                curve=pd.DataFrame(curve)
+                st.subheader("📊 Short Straddle Result")
+                a,b,c,d=st.columns(4)
+                a.metric("Entry premium",f"₹{entry:,.2f}")
+                b.metric("Exit mark",f"₹{exitv:,.2f}")
+                c.metric("Gross P&L",f"₹{gross:,.2f}")
+                d.metric("Net P&L",f"₹{net:,.2f}")
+                st.write(f"Entry: **{entry_date.strftime('%d-%b-%Y')}** → Exit: **{exit_date.strftime('%d-%b-%Y')}** | Lot size: **{lot_size}**")
+                st.write(f"Approx. worst mark-to-market loss during the supplied period: **₹{max_loss:,.2f}** before charges/slippage.")
+                if exit_date < pd.Timestamp(merged.iloc[0].expiry):
+                    st.warning("This contract had not reached expiry within the uploaded data. This is a mark-to-market backtest, not an expiry-settlement result.")
                 else:
-                    st.success(f"Generated {len(out):,} research signals.")
-                    st.dataframe(out,use_container_width=True)
-                    st.download_button("⬇️ Download option signals",out.to_csv(index=False),
-                                       "option_strategy_signals_v14_1.csv","text/csv")
-                    st.caption("Signals are research outputs only. This build does not place broker orders.")
+                    st.success("The uploaded period reaches the contract expiry.")
+                st.dataframe(merged[["datetime","spot","ce_mark","pe_mark","straddle_mark","ce_oi","pe_oi"]],use_container_width=True)
+                st.line_chart(curve.set_index("datetime")[["pnl"]])
+                st.download_button("⬇️ Download straddle backtest",merged.to_csv(index=False),
+                                   "nifty_short_straddle_v14_3.csv","text/csv")
 
-            st.markdown("### 3) NSE data quality checks")
-            dup=int(opt.duplicated(["datetime","expiry","strike","option_type"]).sum())
-            bad_exp=int((opt.expiry<opt.datetime.dt.normalize()).sum())
-            q1,q2,q3,q4=st.columns(4)
-            q1.metric("Duplicate contract rows",dup)
-            q2.metric("Expiry before timestamp",bad_exp)
-            q3.metric("CE rows",int((opt.option_type=="CE").sum()))
-            q4.metric("PE rows",int((opt.option_type=="PE").sum()))
-            if dup or bad_exp:
-                st.warning("Data quality issues detected. Clean/verify the NSE export before treating results as valid.")
-            
-            st.markdown("### 4) Rule extraction / validation")
-            st.write("Before calling any module a faithful implementation, compare its exact entry, strike-selection, exit and risk rules with the source video. The app deliberately labels the current four as research templates.")
-            st.write("Next stage: run chronological in-sample → validation → unseen tests on the imported NSE contract history, with brokerage, slippage, max-loss and expiry-aware position handling.")
+    st.markdown("### 4) Research validation")
+    st.write("For a stronger study, repeat this with multiple completed expiries and compare chronological in-sample, validation and unseen results. Do not treat a single expiry as evidence of profitability.")
 
 st.divider()
 st.caption("Research/paper-trading only. No profit guarantee. Live orders are disabled.")
