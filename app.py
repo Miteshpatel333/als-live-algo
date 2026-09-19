@@ -223,7 +223,7 @@ if st.button("🚀 Run V12 Strategy Research",type="primary"):
 
     for name,(selected,fs,t,e,s) in chosen.items():
         st.subheader(f"📈 {name} — {selected}")
-        st.dataframe(fs[["Family","Trades","Win Rate %","PF","Expectancy","Max DD %","Eligible"]],use_container_width=True)
+        st.dataframe(fs[["Family","Windows Positive","Median PF","Median Expectancy","Worst DD %","Min Trades","Eligible"]],use_container_width=True)
         a,b,c,d=st.columns(4)
         a.metric("Unseen P&L",f"₹{s['P&L']:,.2f}")
         b.metric("Unseen Win Rate",f"{s['Win Rate %']:.1f}%")
