@@ -3,7 +3,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 
-st.set_page_config(page_title="ALS AI Algo Trading V13", page_icon="🤖", layout="wide")
+st.set_page_config(page_title="ALS AI Algo Trading V14", page_icon="🤖", layout="wide")
 
 SYMBOLS={"NIFTY":"^NSEI","BANK NIFTY":"^NSEBANK","SENSEX":"^BSESN"}
 
@@ -188,7 +188,7 @@ def get_price(chain, opt_type, strike):
     if len(z)==0: return np.nan
     return float(z.iloc[-1].close)
 
-st.title("🤖 ALS AI Algo Trading V13")
+st.title("🤖 ALS AI Algo Trading V14")
 st.caption("Index research + Option Strategy Lab • backtest/paper research only • live orders disabled")
 
 tab1,tab2=st.tabs(["📊 Index Research","🧩 Option Strategy Lab"])
@@ -203,8 +203,8 @@ with tab1:
         maxtrades=st.slider("Max trades/day",1,3,2)
         cost=st.number_input("Cost per completed trade (₹)",0,200,20,5)
         slip=st.number_input("Slippage (bps)",0,10,2,1)
-    st.info("V13 keeps the V12 robustness gate. A PASS requires positive out-of-sample expectancy, PF > 1, at least 3 unseen trades, and max DD < 5%.")
-    if st.button("🚀 Run V13 Index Research",type="primary"):
+    st.info("V14 keeps the V12 robustness gate. A PASS requires positive out-of-sample expectancy, PF > 1, at least 3 unseen trades, and max DD < 5%.")
+    if st.button("🚀 Run V14 Index Research",type="primary"):
         all_rows=[]; chosen={}; progress=st.progress(0); families=["TREND","PULLBACK","MOMENTUM","BREAKOUT"]
         for i,(name,ticker) in enumerate(SYMBOLS.items(),1):
             d=fetch(ticker,period,interval)
@@ -232,7 +232,7 @@ with tab1:
             all_rows.append({"Symbol":name,"Selected":selected,"Status":status,"Unseen P&L":us["P&L"],"Unseen Trades":us["Trades"],
                              "Unseen Win %":us["Win Rate %"],"Unseen PF":us["PF"],"Unseen Expectancy":us["Expectancy"],"Unseen Max DD %":us["Max DD %"]})
             chosen[name]=(selected,fs,ue,us); progress.progress(i/3)
-        st.subheader("📊 V13 Robustness Results")
+        st.subheader("📊 V14 Robustness Results")
         st.dataframe(pd.DataFrame(all_rows),use_container_width=True)
         for name,(selected,fs,e,s) in chosen.items():
             st.subheader(f"📈 {name} — {selected}")
@@ -243,7 +243,7 @@ with tab1:
             if len(e): st.line_chart(e.set_index("datetime")[["equity"]])
 
 with tab2:
-    st.warning("Option Strategy Lab is for research/paper testing. The four modules are transparent templates inspired by the named educational topics; they are NOT claimed to reproduce every rule from the videos verbatim.")
+    st.warning("Option Strategy Lab is research/paper testing only. V14 adds an NSE contract-data import workflow. The four modules are transparent research templates inspired by the named educational topics; they are NOT claimed to reproduce every rule from the videos verbatim.")
     st.markdown("### Strategy Library")
     strategy=st.selectbox("Select strategy",[
         "Mukul — Short Straddle",
@@ -260,9 +260,12 @@ with tab2:
     st.info(desc[strategy])
 
     st.markdown("### 1) Historical option data")
-    st.write("Upload CSV with at least: datetime, expiry, strike, option_type, close. Optional: open, high, low, volume, oi.")
-    st.download_button("⬇️ Download CSV template",option_template().to_csv(index=False),"option_data_template_v13.csv","text/csv")
-    uploaded=st.file_uploader("Upload option-chain/contract history CSV",type=["csv"])
+    st.markdown("### NSE historical contract data")
+    st.write("NSE provides a Historical Contract-wise Price Volume Data report with filters for Instrument, Symbol, Year, Expiry, Option Type and Strike Price, plus CSV download. V14 is designed around that contract-level data. citeturn0search1")
+    st.markdown("**NSE workflow:** Historical Contract-wise Price Volume Data → Instrument: Options → Symbol: NIFTY → choose Year/Expiry/Option Type/Strike → download CSV. The app then normalizes the downloaded file.")
+    st.markdown("NSE also exposes current option-chain CSV downloads, but current-chain data is not a substitute for historical contract prices when doing a backtest. citeturn0search3")
+    st.download_button("⬇️ Download normalized CSV template",option_template().to_csv(index=False),"option_data_template_v14.csv","text/csv")
+    uploaded=st.file_uploader("Upload NSE contract-wise CSV (or normalized CSV)",type=["csv"])
     if uploaded:
         raw=pd.read_csv(uploaded)
         opt,missing=normalize_option_df(raw)
@@ -271,7 +274,7 @@ with tab2:
         elif opt.empty:
             st.error("No usable CE/PE rows found.")
         else:
-            st.success(f"Loaded {len(opt):,} option rows.")
+            st.success(f"Loaded {len(opt):,} option rows. V14 will use actual contract premium/close, expiry, strike and CE/PE fields for research.")
             c1,c2,c3=st.columns(3)
             c1.metric("Rows",f"{len(opt):,}")
             c2.metric("Dates",f"{opt.datetime.dt.date.nunique():,}")
@@ -316,12 +319,23 @@ with tab2:
                     st.success(f"Generated {len(out):,} research signals.")
                     st.dataframe(out,use_container_width=True)
                     st.download_button("⬇️ Download option signals",out.to_csv(index=False),
-                                       "option_strategy_signals_v13.csv","text/csv")
+                                       "option_strategy_signals_v14.csv","text/csv")
                     st.caption("Signals are research outputs only. This build does not place broker orders.")
 
-    st.markdown("### 3) Rule extraction / validation")
+    st.markdown("### 3) NSE data quality checks")
+            dup=int(opt.duplicated(["datetime","expiry","strike","option_type"]).sum())
+            bad_exp=int((opt.expiry<opt.datetime.dt.normalize()).sum())
+            q1,q2,q3,q4=st.columns(4)
+            q1.metric("Duplicate contract rows",dup)
+            q2.metric("Expiry before timestamp",bad_exp)
+            q3.metric("CE rows",int((opt.option_type=="CE").sum()))
+            q4.metric("PE rows",int((opt.option_type=="PE").sum()))
+            if dup or bad_exp:
+                st.warning("Data quality issues detected. Clean/verify the NSE export before treating results as valid.")
+
+            st.markdown("### 4) Rule extraction / validation")
     st.write("Before calling any module a faithful implementation, compare its exact entry, strike-selection, exit and risk rules with the source video. The app deliberately labels the current four as research templates.")
-    st.write("Next stage: add a verified historical option dataset, then run chronological in-sample → validation → unseen tests with brokerage, slippage and max-loss controls.")
+    st.write("Next stage: run chronological in-sample → validation → unseen tests on the imported NSE contract history, with brokerage, slippage, max-loss and expiry-aware position handling.")
 
 st.divider()
 st.caption("Research/paper-trading only. No profit guarantee. Live orders are disabled.")
