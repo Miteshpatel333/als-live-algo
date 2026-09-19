@@ -3,7 +3,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 
-st.set_page_config(page_title="ALS AI Algo Trading V14.3", page_icon="🤖", layout="wide")
+st.set_page_config(page_title="ALS AI Algo Trading V14.4", page_icon="🤖", layout="wide")
 
 SYMBOLS={"NIFTY":"^NSEI","BANK NIFTY":"^NSEBANK","SENSEX":"^BSESN"}
 
@@ -198,7 +198,7 @@ def get_price(chain, opt_type, strike):
     if len(z)==0: return np.nan
     return float(z.iloc[-1].close)
 
-st.title("🤖 ALS AI Algo Trading V14.3")
+st.title("🤖 ALS AI Algo Trading V14.4")
 st.caption("Index research + Option Strategy Lab • backtest/paper research only • live orders disabled")
 
 tab1,tab2=st.tabs(["📊 Index Research","🧩 Option Strategy Lab"])
@@ -213,7 +213,7 @@ with tab1:
         maxtrades=st.slider("Max trades/day",1,3,2)
         cost=st.number_input("Cost per completed trade (₹)",0,200,20,5)
         slip=st.number_input("Slippage (bps)",0,10,2,1)
-    st.info("V14.3 keeps the V12 robustness gate. A PASS requires positive out-of-sample expectancy, PF > 1, at least 3 unseen trades, and max DD < 5%.")
+    st.info("V14.4 keeps the V12 robustness gate. A PASS requires positive out-of-sample expectancy, PF > 1, at least 3 unseen trades, and max DD < 5%.")
     if st.button("🚀 Run V14 Index Research",type="primary"):
         all_rows=[]; chosen={}; progress=st.progress(0); families=["TREND","PULLBACK","MOMENTUM","BREAKOUT"]
         for i,(name,ticker) in enumerate(SYMBOLS.items(),1):
@@ -253,7 +253,7 @@ with tab1:
             if len(e): st.line_chart(e.set_index("datetime")[["equity"]])
 
 with tab2:
-    st.warning("Option Strategy Lab is research/paper testing only. V14.3 adds paired CE+PE analysis for an actual historical short-straddle mark-to-market. Live orders remain disabled.")
+    st.warning("Option Strategy Lab is research/paper testing only. V14.4 adds multiple-expiry paired CE+PE analysis. Live orders remain disabled.")
 
     st.markdown("### Strategy Library")
     strategy=st.selectbox("Select strategy",[
@@ -262,35 +262,30 @@ with tab2:
         "Pushkar — Option Chain",
         "Pushkar — Indicator Scalping"
     ])
-    desc={
-        "Mukul — Short Straddle":"Paired ATM CE + ATM PE short template. V14.3 can calculate a paired daily mark-to-market when both CE and PE contract files are uploaded.",
-        "Mukul — Bull Call Spread":"Buy ATM CE + sell a higher-strike CE. Defined-risk debit spread template.",
-        "Pushkar — Option Chain":"Uses CE/PE OI and volume fields as a transparent support/resistance proxy; not a claim of exact video-rule reproduction.",
-        "Pushkar — Indicator Scalping":"Directional option-buying template; underlying indicator confirmation is required before treating a signal as executable."
-    }
-    st.info(desc[strategy])
+    if strategy == "Mukul — Short Straddle":
+        st.info("V14.4 હવે matching CE + PE files સાથે multiple expiriesનું research કરી શકે છે. આ research template છે; videoના દરેક ruleની verbatim copy તરીકે claim નથી.")
+    else:
+        st.info("આ modules research templates છે. V14.4નું multi-expiry calculator હાલ paired Short Straddle માટે implement કરેલું છે.")
 
-    st.markdown("### 1) Historical option data")
-    st.write("Upload the NSE contract-wise CSV files. For the Short Straddle module, upload both the matching CE and PE files for the same symbol, strike and expiry.")
-    ce_file=st.file_uploader("Upload NSE CE CSV",type=["csv"],key="ce_v143")
-    pe_file=st.file_uploader("Upload matching NSE PE CSV",type=["csv"],key="pe_v143")
+    st.markdown("### 1) Multiple-expiry historical option data")
+    st.write("એક સાથે ઘણી NSE CE CSV અને ઘણી matching PE CSV files upload કરી શકો છો.")
+    ce_files=st.file_uploader("NIFTY CE CSV files upload કરો",type=["csv"],accept_multiple_files=True,key="ce_v144")
+    pe_files=st.file_uploader("Matching NIFTY PE CSV files upload કરો",type=["csv"],accept_multiple_files=True,key="pe_v144")
 
-    def normalize_nse(df):
+    def normalize_nse_v144(df):
         x=df.copy()
         x.columns=[str(c).strip().lower().replace(" ","_") for c in x.columns]
-        # Remove duplicate column names safely (NSE can expose both Close/LTP variants).
         x=x.loc[:,~x.columns.duplicated()].copy()
         aliases={
-            "date":"datetime","expiry":"expiry","option_type":"option_type",
-            "strike_price":"strike","underlying_value":"spot",
-            "open_int":"oi","settle_price":"settle_price",
-            "close":"close","ltp":"ltp","open":"open","high":"high","low":"low",
-            "symbol":"symbol"
+            "date":"datetime","strike_price":"strike","underlying_value":"spot",
+            "open_int":"oi","settle_price":"settle_price","option_type":"option_type",
+            "close":"close","ltp":"ltp","symbol":"symbol"
         }
         x=x.rename(columns={c:aliases.get(c,c) for c in x.columns})
         required=["datetime","expiry","strike","option_type","close","settle_price"]
         missing=[c for c in required if c not in x.columns]
-        if missing: return pd.DataFrame(),missing
+        if missing:
+            return pd.DataFrame(),missing
         x["datetime"]=pd.to_datetime(x["datetime"],errors="coerce")
         x["expiry"]=pd.to_datetime(x["expiry"],errors="coerce")
         x["strike"]=pd.to_numeric(x["strike"],errors="coerce")
@@ -300,86 +295,94 @@ with tab2:
             x[c]=pd.to_numeric(x[c].replace("-",np.nan),errors="coerce")
         x=x.dropna(subset=["datetime","expiry","strike","option_type"])
         x=x[x.option_type.isin(["CE","PE"])].sort_values("datetime").reset_index(drop=True)
-        # For NSE rows with no traded OHLC, use settlement price as the daily mark.
-        x["mark"]=x["close"].where(x["close"].notna() & (x["close"]!=1089.75),x["settle_price"])
+        x["mark"]=x["close"]
+        x.loc[x["mark"]==1089.75,"mark"]=x.loc[x["mark"]==1089.75,"settle_price"]
+        x["symbol"]=x["symbol"].astype(str) if "symbol" in x else "NIFTY"
         return x,[]
 
-    ce=None; pe=None
-    if ce_file:
-        raw=pd.read_csv(ce_file); ce,miss=normalize_nse(raw)
-        if miss: st.error("CE file missing: "+", ".join(miss))
-        else: st.success(f"CE loaded: {len(ce):,} rows")
-    if pe_file:
-        raw=pd.read_csv(pe_file); pe,miss=normalize_nse(raw)
-        if miss: st.error("PE file missing: "+", ".join(miss))
-        else: st.success(f"PE loaded: {len(pe):,} rows")
+    def read_many(files, expected_type):
+        frames=[]; errors=[]
+        for f in files or []:
+            try:
+                z,miss=normalize_nse_v144(pd.read_csv(f))
+                if miss:
+                    errors.append(f"{f.name}: missing {', '.join(miss)}")
+                    continue
+                z=z[z.option_type==expected_type].copy()
+                if len(z): frames.append(z)
+            except Exception as e:
+                errors.append(f"{f.name}: {e}")
+        return (pd.concat(frames,ignore_index=True) if frames else pd.DataFrame()),errors
 
-    if ce is not None and pe is not None and len(ce) and len(pe):
-        st.markdown("### 2) Contract match")
-        ce_key=ce.iloc[0]; pe_key=pe.iloc[0]
-        same_symbol=str(ce_key.get("symbol",""))==str(pe_key.get("symbol",""))
-        same_strike=float(ce_key["strike"])==float(pe_key["strike"])
-        same_expiry=pd.Timestamp(ce_key["expiry"])==pd.Timestamp(pe_key["expiry"])
+    ce_all,ce_errors=read_many(ce_files,"CE")
+    pe_all,pe_errors=read_many(pe_files,"PE")
+    if ce_errors: st.warning("CE files: "+" | ".join(ce_errors))
+    if pe_errors: st.warning("PE files: "+" | ".join(pe_errors))
+
+    if len(ce_all) or len(pe_all):
+        a,b=st.columns(2)
+        a.metric("CE rows loaded",f"{len(ce_all):,}")
+        b.metric("PE rows loaded",f"{len(pe_all):,}")
+
+    if len(ce_all) and len(pe_all):
+        st.markdown("### 2) Research controls")
         c1,c2,c3,c4=st.columns(4)
-        c1.metric("CE rows",len(ce)); c2.metric("PE rows",len(pe))
-        c3.metric("Strike",f"{ce_key['strike']:.0f}"); c4.metric("Expiry",pd.Timestamp(ce_key["expiry"]).strftime("%d-%b-%Y"))
-        if not (same_symbol and same_strike and same_expiry):
-            st.error("CE and PE files do not match on symbol/strike/expiry.")
-        else:
-            st.success("CE + PE contract match confirmed.")
-            merged=ce[["datetime","expiry","strike","spot","mark","close","settle_price","oi"]].rename(
-                columns={"mark":"ce_mark","close":"ce_close","settle_price":"ce_settle","oi":"ce_oi"}
-            ).merge(
-                pe[["datetime","expiry","strike","spot","mark","close","settle_price","oi"]].rename(
-                    columns={"mark":"pe_mark","close":"pe_close","settle_price":"pe_settle","oi":"pe_oi"}
-                ),
-                on=["datetime","expiry","strike"],how="inner"
-            ).sort_values("datetime").reset_index(drop=True)
-            merged["spot"]=merged["spot_x"].combine_first(merged["spot_y"])
-            merged["straddle_mark"]=merged.ce_mark+merged.pe_mark
-            merged["straddle_close"]=merged.ce_close+merged.pe_close
-            st.markdown("### 3) Short Straddle backtest")
-            c1,c2,c3=st.columns(3)
-            capital=st.number_input("Research capital (₹)",10000,10000000,100000,10000,key="ss_cap")
-            lot_size=st.number_input("NIFTY lot size",1,1000,65,1,key="ss_lot")
-            cost=st.number_input("Brokerage + charges per round trip (₹)",0,5000,100,10,key="ss_cost")
-            slip=st.number_input("Slippage per leg (₹)",0.0,20.0,1.0,0.5,key="ss_slip")
-            st.caption("Daily mark uses traded Close where available; if NSE provides no traded OHLC and the file contains the placeholder 1089.75, V14.3 falls back to Settlement Price. This avoids treating the placeholder as a real market quote.")
-            if st.button("🧪 Run Short Straddle Backtest",type="primary",key="run_ss"):
-                entry_date=pd.Timestamp(merged.datetime.min())
-                exit_date=pd.Timestamp(merged.datetime.max())
-                entry=float(merged.iloc[0].straddle_mark)
-                exitv=float(merged.iloc[-1].straddle_mark)
+        lot_size=st.number_input("NIFTY lot size",1,1000,65,1,key="multi_lot")
+        cost=st.number_input("Charges per expiry (₹)",0,5000,100,10,key="multi_cost")
+        slip=st.number_input("Slippage per leg (₹)",0.0,20.0,1.0,0.5,key="multi_slip")
+        min_days=st.number_input("Minimum observations / expiry",2,100,5,1,key="multi_min")
+        st.caption("દરેક CE+PE pair ને Symbol + Strike + Expiryથી match કરવામાં આવશે. Entry = પ્રથમ common date, Exit = છેલ્લી common date. Expiry સુધી data ન હોય તો result mark-to-market રહેશે.")
+
+        if st.button("🧪 Multiple-Expiry Short Straddle ચલાવો",type="primary",key="run_multi"):
+            ce_groups=ce_all.groupby(["symbol","strike","expiry"],dropna=False)
+            pe_groups=pe_all.groupby(["symbol","strike","expiry"],dropna=False)
+            keys=sorted(set(ce_groups.groups.keys()) & set(pe_groups.groups.keys()),key=lambda x:(str(x[2]),float(x[1])))
+            results=[]; curves=[]
+            for key in keys:
+                ce=ce_groups.get_group(key).copy()
+                pe=pe_groups.get_group(key).copy()
+                m=ce[["datetime","spot","mark","oi"]].rename(columns={"spot":"ce_spot","mark":"ce_mark","oi":"ce_oi"}).merge(
+                    pe[["datetime","spot","mark","oi"]].rename(columns={"spot":"pe_spot","mark":"pe_mark","oi":"pe_oi"}),
+                    on="datetime",how="inner").sort_values("datetime").reset_index(drop=True)
+                if len(m)<min_days: continue
+                m["spot"]=m.ce_spot.combine_first(m.pe_spot)
+                m["straddle_mark"]=m.ce_mark+m.pe_mark
+                entry=float(m.iloc[0].straddle_mark)
+                exitv=float(m.iloc[-1].straddle_mark)
                 gross=(entry-exitv)*lot_size
                 net=gross-cost-2*slip*lot_size
-                peak=entry
-                max_loss=0.0
-                curve=[]
-                for _,r in merged.iterrows():
-                    pnl=(entry-float(r.straddle_mark))*lot_size
-                    curve.append({"datetime":r.datetime,"pnl":pnl})
-                    adverse=(float(r.straddle_mark)-entry)*lot_size
-                    max_loss=max(max_loss,adverse)
-                curve=pd.DataFrame(curve)
-                st.subheader("📊 Short Straddle Result")
+                adverse=((m.straddle_mark-entry).clip(lower=0)*lot_size).max()
+                expiry=pd.Timestamp(key[2]); first_dt=pd.Timestamp(m.iloc[0].datetime); last_dt=pd.Timestamp(m.iloc[-1].datetime)
+                reached=last_dt.normalize()>=expiry.normalize()
+                results.append({
+                    "Symbol":key[0],"Strike":float(key[1]),"Expiry":expiry.strftime("%d-%b-%Y"),
+                    "Entry Date":first_dt.strftime("%d-%b-%Y"),"Exit/Last Date":last_dt.strftime("%d-%b-%Y"),
+                    "Days":int((last_dt.normalize()-first_dt.normalize()).days),
+                    "Entry Premium":entry,"Exit Mark":exitv,"Gross P&L":gross,"Net P&L":net,
+                    "Worst Adverse MTM":adverse,"Reached Expiry":"YES" if reached else "NO","Rows":len(m)
+                })
+                c=m[["datetime","straddle_mark"]].copy()
+                c["expiry"]=expiry.strftime("%d-%b-%Y")
+                c["pnl"]=(entry-c.straddle_mark)*lot_size-cost
+                curves.append(c)
+            out=pd.DataFrame(results)
+            if out.empty:
+                st.error("કોઈ matching CE+PE expiry/strike pair મળ્યો નથી. ઓછામાં ઓછા એક expiry માટે matching CE અને PE upload કરો.")
+            else:
+                st.markdown("### 3) Expiry-wise પરિણામ")
+                st.dataframe(out,use_container_width=True)
+                total_net=float(out["Net P&L"].sum()); wins=int((out["Net P&L"]>0).sum()); losses=int((out["Net P&L"]<0).sum()); worst=float(out["Worst Adverse MTM"].max())
                 a,b,c,d=st.columns(4)
-                a.metric("Entry premium",f"₹{entry:,.2f}")
-                b.metric("Exit mark",f"₹{exitv:,.2f}")
-                c.metric("Gross P&L",f"₹{gross:,.2f}")
-                d.metric("Net P&L",f"₹{net:,.2f}")
-                st.write(f"Entry: **{entry_date.strftime('%d-%b-%Y')}** → Exit: **{exit_date.strftime('%d-%b-%Y')}** | Lot size: **{lot_size}**")
-                st.write(f"Approx. worst mark-to-market loss during the supplied period: **₹{max_loss:,.2f}** before charges/slippage.")
-                if exit_date < pd.Timestamp(merged.iloc[0].expiry):
-                    st.warning("This contract had not reached expiry within the uploaded data. This is a mark-to-market backtest, not an expiry-settlement result.")
-                else:
-                    st.success("The uploaded period reaches the contract expiry.")
-                st.dataframe(merged[["datetime","spot","ce_mark","pe_mark","straddle_mark","ce_oi","pe_oi"]],use_container_width=True)
-                st.line_chart(curve.set_index("datetime")[["pnl"]])
-                st.download_button("⬇️ Download straddle backtest",merged.to_csv(index=False),
-                                   "nifty_short_straddle_v14_3.csv","text/csv")
+                a.metric("કુલ Net P&L",f"₹{total_net:,.2f}"); b.metric("Profit expiries",wins); c.metric("Loss expiries",losses); d.metric("Worst MTM",f"₹{worst:,.2f}")
+                st.caption(f"દરેક tested expiryનું સરેરાશ Net P&L: ₹{out['Net P&L'].mean():,.2f}. આ historical research છે, future profit prediction નથી.")
+                st.download_button("⬇️ Multi-expiry પરિણામ CSV",out.to_csv(index=False),"nifty_short_straddle_multi_expiry_v14_4.csv","text/csv")
+                if curves:
+                    allc=pd.concat(curves,ignore_index=True)
+                    st.markdown("### 4) P&L curves")
+                    st.line_chart(allc.set_index("datetime")[["pnl"]])
 
-    st.markdown("### 4) Research validation")
-    st.write("For a stronger study, repeat this with multiple completed expiries and compare chronological in-sample, validation and unseen results. Do not treat a single expiry as evidence of profitability.")
+    st.markdown("### 5) Research validation")
+    st.write("સાચી validation માટે ઘણી completed expiries લો, rules પહેલેથી fixed રાખો અને development તથા unseen expiries અલગ રાખો. એક expiry પરથી profitabilityનો નિર્ણય ન લેવો.")
 
 st.divider()
 st.caption("Research/paper-trading only. No profit guarantee. Live orders are disabled.")
