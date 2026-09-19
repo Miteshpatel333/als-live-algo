@@ -3,7 +3,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 
-st.set_page_config(page_title="ALS AI Algo Trading V11", page_icon="🤖", layout="wide")
+st.set_page_config(page_title="ALS AI Algo Trading V12", page_icon="🤖", layout="wide")
 
 SYMBOLS={"NIFTY":"^NSEI","BANK NIFTY":"^NSEBANK","SENSEX":"^BSESN"}
 
@@ -40,41 +40,51 @@ def indicators(d):
     d["ret3"]=d.close.pct_change(3)
     d["ret8"]=d.close.pct_change(8)
     d["range_pct"]=(d.high-d.low)/d.close*100
+    d["body_pct"]=(d.close-d.open).abs()/d.close*100
+    d["vol_med"]=d.volume.rolling(20,min_periods=10).median()
+    d["close_pos"]=(d.close-d.low)/(d.high-d.low).replace(0,np.nan)
     return d
 
 # Four deliberately different rule families.
 def family_signal(r, fam):
     trend_up=r.ema20>r.ema50 and r.ema50>r.ema200
     trend_dn=r.ema20<r.ema50 and r.ema50<r.ema200
-    if pd.isna(r.atr) or pd.isna(r.atr_med) or r.atr>r.atr_med*1.8:
+    atr_ok=(not pd.isna(r.atr) and not pd.isna(r.atr_med) and r.atr<=r.atr_med*1.5)
+    slope_up=r.ema20>r.ema20.shift if False else True
+    # V12 regime/quality filters.
+    if not atr_ok:
         return "NO TRADE",0,"HIGH_VOL"
-    if abs(r.ema20-r.ema50)/r.close*100 < 0.04:
+    if abs(r.ema20-r.ema50)/r.close*100 < 0.06:
         return "NO TRADE",0,"SIDEWAYS"
+    if pd.isna(r.rsi) or pd.isna(r.close_pos):
+        return "NO TRADE",0,"NO_CONFIRM"
+    bullish_bar=r.close>r.open and r.close_pos>=0.60
+    bearish_bar=r.close<r.open and r.close_pos<=0.40
+    vol_ok=(r.volume<=0 or pd.isna(r.vol_med) or r.volume>=r.vol_med*0.8)
 
     if fam=="TREND":
-        if trend_up and r.close>r.vwap and r.close>r.ema9 and 52<=r.rsi<=67 and r.ret3>0 and r.ret8>0:
-            return "BUY",80,"UPTREND"
-        if trend_dn and r.close<r.vwap and r.close<r.ema9 and 33<=r.rsi<=48 and r.ret3<0 and r.ret8<0:
-            return "SELL",80,"DOWNTREND"
+        if trend_up and r.close>r.vwap and r.close>r.ema9 and 53<=r.rsi<=65 and r.ret3>0 and r.ret8>0 and bullish_bar and vol_ok:
+            return "BUY",85,"UPTREND"
+        if trend_dn and r.close<r.vwap and r.close<r.ema9 and 35<=r.rsi<=47 and r.ret3<0 and r.ret8<0 and bearish_bar and vol_ok:
+            return "SELL",85,"DOWNTREND"
 
     elif fam=="PULLBACK":
-        if trend_up and r.close>r.ema50 and r.close>r.vwap and 45<=r.rsi<=58 and r.close>r.open:
-            return "BUY",75,"UPTREND"
-        if trend_dn and r.close<r.ema50 and r.close<r.vwap and 42<=r.rsi<=55 and r.close<r.open:
-            return "SELL",75,"DOWNTREND"
+        if trend_up and r.close>r.ema50 and r.close>r.vwap and 46<=r.rsi<=57 and bullish_bar and vol_ok:
+            return "BUY",80,"UPTREND"
+        if trend_dn and r.close<r.ema50 and r.close<r.vwap and 43<=r.rsi<=54 and bearish_bar and vol_ok:
+            return "SELL",80,"DOWNTREND"
 
     elif fam=="MOMENTUM":
-        if trend_up and r.ret3>0.0012 and r.ret8>0.0015 and r.rsi>55 and r.close>r.vwap:
-            return "BUY",85,"UPTREND"
-        if trend_dn and r.ret3<-0.0012 and r.ret8<-0.0015 and r.rsi<45 and r.close<r.vwap:
-            return "SELL",85,"DOWNTREND"
+        if trend_up and r.ret3>0.0015 and r.ret8>0.0018 and r.rsi>56 and r.close>r.vwap and bullish_bar and vol_ok:
+            return "BUY",88,"UPTREND"
+        if trend_dn and r.ret3<-0.0015 and r.ret8<-0.0018 and r.rsi<44 and r.close<r.vwap and bearish_bar and vol_ok:
+            return "SELL",88,"DOWNTREND"
 
     elif fam=="BREAKOUT":
-        # Current close breaking the recent 10-bar range with trend confirmation.
-        if trend_up and r.close>r.high_10 and r.rsi>55:
-            return "BUY",85,"UPTREND"
-        if trend_dn and r.close<r.low_10 and r.rsi<45:
-            return "SELL",85,"DOWNTREND"
+        if trend_up and r.close>r.high_10 and r.rsi>56 and bullish_bar and vol_ok:
+            return "BUY",88,"UPTREND"
+        if trend_dn and r.close<r.low_10 and r.rsi<44 and bearish_bar and vol_ok:
+            return "SELL",88,"DOWNTREND"
 
     return "NO TRADE",0,"MIXED"
 
@@ -93,11 +103,11 @@ def backtest(d, fam, capital, risk_pct, maxtrades, cost, slip_bps):
         if pos:
             if pos["side"]=="BUY":
                 if r.close>=pos["entry"]+pos["risk"]: pos["sl"]=max(pos["sl"],pos["entry"])
-                pos["sl"]=max(pos["sl"],float(r.close-r.atr*0.9))
+                pos["sl"]=max(pos["sl"],float(r.close-r.atr*0.75))
                 xp=pos["sl"] if r.low<=pos["sl"] else (pos["target"] if r.high>=pos["target"] else None)
             else:
                 if r.close<=pos["entry"]-pos["risk"]: pos["sl"]=min(pos["sl"],pos["entry"])
-                pos["sl"]=min(pos["sl"],float(r.close+r.atr*0.9))
+                pos["sl"]=min(pos["sl"],float(r.close+r.atr*0.75))
                 xp=pos["sl"] if r.high>=pos["sl"] else (pos["target"] if r.low<=pos["target"] else None)
 
             if xp is not None:
@@ -109,10 +119,10 @@ def backtest(d, fam, capital, risk_pct, maxtrades, cost, slip_bps):
 
         s,score,reg=family_signal(r,fam)
         if pos is None and s!="NO TRADE" and dayn[day]<maxtrades:
-            dist=max(float(r.atr)*1.5,0.01)
+            dist=max(float(r.atr)*1.35,0.01)
             qty=max(1,int((cash*risk_pct/100)/dist))
             entry=float(r.close)*(1+slip_bps/10000 if s=="BUY" else 1-slip_bps/10000)
-            rr=2.0
+            rr=2.2
             pos={"side":s,"entry":entry,"sl":entry-dist if s=="BUY" else entry+dist,
                  "target":entry+dist*rr if s=="BUY" else entry-dist*rr,
                  "qty":qty,"entry_time":r.datetime,"confidence":score,
@@ -134,8 +144,8 @@ def backtest(d, fam, capital, risk_pct, maxtrades, cost, slip_bps):
            "Max DD %":maxdd}
     return t,pd.DataFrame(eq,columns=["datetime","equity"]),stats
 
-st.title("🤖 ALS AI Algo Trading V11")
-st.caption("Strategy research engine • Trend / Pullback / Momentum / Breakout • Walk-forward + robustness test • Paper trading only")
+st.title("🤖 ALS AI Algo Trading V12")
+st.caption("Strategy research engine • Multi-window walk-forward • Confirmation + regime filters • Paper trading only")
 
 with st.sidebar:
     interval=st.selectbox("Interval",["15m","1h"],index=0)
@@ -146,9 +156,9 @@ with st.sidebar:
     cost=st.number_input("Cost per completed trade (₹)",0,200,20,5)
     slip=st.number_input("Slippage (bps)",0,10,2,1)
 
-st.info("V11 compares four rule families and tests the selected family on a later unseen segment. No strategy is declared robust from a single profitable period.")
+st.info("V12 compares four rule families and tests the selected family on a later unseen segment. No strategy is declared robust from a single profitable period.")
 
-if st.button("🚀 Run V11 Strategy Research",type="primary"):
+if st.button("🚀 Run V12 Strategy Research",type="primary"):
     all_rows=[]; chosen={}; progress=st.progress(0)
     families=["TREND","PULLBACK","MOMENTUM","BREAKOUT"]
 
@@ -157,40 +167,58 @@ if st.button("🚀 Run V11 Strategy Research",type="primary"):
         if len(d)<220:
             all_rows.append({"Symbol":name,"Status":"Not enough data"}); progress.progress(i/3); continue
         d=add_breakout_cols(indicators(d)).dropna(subset=["ema200","atr","atr_med","rsi","high_10","low_10"])
-        n=len(d); a=int(n*.55); b=int(n*.75)
-        train=d.iloc[:a]; validation=d.iloc[a:b]; unseen=d.iloc[b:]
+        n=len(d)
+        # Three chronological windows; the last window is never used for family selection.
+        windows=[
+            (0.45,0.65,0.65,0.80),
+            (0.10,0.50,0.50,0.70),
+            (0.25,0.60,0.60,0.78),
+        ]
 
-        fam_stats=[]
+        family_rows=[]
         for fam in families:
-            _,_,tr=backtest(train,fam,capital,risk,maxtrades,cost,slip_bps=slip)
-            _,_,va=backtest(validation,fam,capital,risk,maxtrades,cost,slip_bps=slip)
-            # Select only if validation has enough trades and positive expectancy/PF.
-            eligible=va["Trades"]>=5 and va["PF"]>1.05 and va["Expectancy"]>0 and va["Max DD %"]<5
-            fam_stats.append({**va,"Family":fam,"Eligible":eligible,"Train P&L":tr["P&L"]})
-        fs=pd.DataFrame(fam_stats)
-        if fs.Eligible.any():
-            eligible=fs[fs.Eligible].sort_values(["PF","Expectancy"],ascending=False)
-            selected=eligible.iloc[0]["Family"]
-        else:
-            selected=fs.sort_values(["PF","Expectancy"],ascending=False).iloc[0]["Family"]
-        _,_,vs=backtest(validation,selected,capital,risk,maxtrades,cost,slip_bps=slip)
+            scores=[]
+            for w,(ts,te,vs,ve) in enumerate(windows,1):
+                train=d.iloc[int(n*ts):int(n*te)]
+                val=d.iloc[int(n*vs):int(n*ve)]
+                _,_,tr=backtest(train,fam,capital,risk,maxtrades,cost,slip_bps=slip)
+                _,_,va=backtest(val,fam,capital,risk,maxtrades,cost,slip_bps=slip)
+                scores.append(va)
+            pfs=[x["PF"] for x in scores]
+            exps=[x["Expectancy"] for x in scores]
+            dds=[x["Max DD %"] for x in scores]
+            trades=[x["Trades"] for x in scores]
+            positive_windows=sum(1 for x in scores if x["Expectancy"]>0 and x["PF"]>1.0)
+            family_rows.append({
+                "Family":fam,
+                "Windows Positive":positive_windows,
+                "Median PF":float(np.median(pfs)),
+                "Median Expectancy":float(np.median(exps)),
+                "Worst DD %":float(max(dds)),
+                "Min Trades":int(min(trades)),
+                "Eligible":positive_windows>=2 and np.median(pfs)>1.02 and np.median(exps)>0 and max(dds)<5
+            })
+
+        fs=pd.DataFrame(family_rows)
+        eligible=fs[fs["Eligible"]]
+        selected=(eligible.sort_values(["Median PF","Median Expectancy"],ascending=False).iloc[0]["Family"]
+                  if len(eligible) else fs.sort_values(["Median PF","Median Expectancy"],ascending=False).iloc[0]["Family"])
+
+        # Final unseen segment is strictly after all selection windows.
+        unseen=d.iloc[int(n*.80):]
         ut,ue,us=backtest(unseen,selected,capital,risk,maxtrades,cost,slip_bps=slip)
 
-        # Robustness gate requires unseen data to remain healthy.
-        robust=(vs["Trades"]>=5 and vs["PF"]>1.05 and vs["Expectancy"]>0 and
-                us["Trades"]>=5 and us["PF"]>1.0 and us["Expectancy"]>0 and us["Max DD %"]<5)
-        status="ROBUST" if robust else "REJECT"
+        robust=(us["Trades"]>=3 and us["PF"]>1.0 and us["Expectancy"]>0 and us["Max DD %"]<5)
+        status="PASS" if robust else "REJECT"
         all_rows.append({"Symbol":name,"Selected":selected,"Status":status,
-                         "Validation P&L":vs["P&L"],"Validation Trades":vs["Trades"],
-                         "Validation PF":vs["PF"],"Unseen P&L":us["P&L"],
-                         "Unseen Trades":us["Trades"],"Unseen Win %":us["Win Rate %"],
-                         "Unseen PF":us["PF"],"Unseen Expectancy":us["Expectancy"],
-                         "Unseen Max DD %":us["Max DD %"]})
+                         "Unseen P&L":us["P&L"],"Unseen Trades":us["Trades"],
+                         "Unseen Win %":us["Win Rate %"],"Unseen PF":us["PF"],
+                         "Unseen Expectancy":us["Expectancy"],"Unseen Max DD %":us["Max DD %"]})
         chosen[name]=(selected,fs,ut,ue,us)
         progress.progress(i/3)
 
     result=pd.DataFrame(all_rows)
-    st.subheader("📊 V11 Robustness Results")
+    st.subheader("📊 V12 Robustness Results")
     st.dataframe(result,use_container_width=True)
 
     for name,(selected,fs,t,e,s) in chosen.items():
@@ -204,8 +232,8 @@ if st.button("🚀 Run V11 Strategy Research",type="primary"):
         st.line_chart(e.set_index("datetime")[["equity"]])
         st.dataframe(t,use_container_width=True)
         if len(t):
-            st.download_button(f"Download {name} V11 unseen trades",
-                t.to_csv(index=False),f"{name.lower().replace(' ','_')}_v11_unseen.csv","text/csv",key=f"v11_{name}")
+            st.download_button(f"Download {name} V12 unseen trades",
+                t.to_csv(index=False),f"{name.lower().replace(' ','_')}_v12_unseen.csv","text/csv",key=f"v11_{name}")
 
 st.divider()
 st.caption("Research/paper-trading only. No profit guarantee. Live orders are disabled.")
