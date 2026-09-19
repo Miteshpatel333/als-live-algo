@@ -2,7 +2,7 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-
+from nse_data import download_option_pair, get_available_expiries, prepare_straddle_dataframe
 st.set_page_config(page_title="ALS AI Algo Trading V14.4", page_icon="🤖", layout="wide")
 
 SYMBOLS={"NIFTY":"^NSEI","BANK NIFTY":"^NSEBANK","SENSEX":"^BSESN"}
