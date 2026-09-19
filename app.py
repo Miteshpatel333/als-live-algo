@@ -3,7 +3,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 
-st.set_page_config(page_title="ALS AI Algo Trading V14", page_icon="🤖", layout="wide")
+st.set_page_config(page_title="ALS AI Algo Trading V14.1", page_icon="🤖", layout="wide")
 
 SYMBOLS={"NIFTY":"^NSEI","BANK NIFTY":"^NSEBANK","SENSEX":"^BSESN"}
 
@@ -135,7 +135,9 @@ def normalize_option_df(df):
     aliases={
         "date":"datetime","timestamp":"datetime","time":"datetime",
         "option":"option_type","type":"option_type","cp":"option_type",
-        "ltp":"close","last_price":"close","open_interest":"oi"
+        "ltp":"close","last_price":"close","open_interest":"oi",
+        "strike_price":"strike","open_int":"oi","underlying_value":"spot",
+        "optiontype":"option_type"
     }
     x=x.rename(columns={c:aliases.get(c,c) for c in x.columns})
     required=["datetime","expiry","strike","option_type","close"]
@@ -188,7 +190,7 @@ def get_price(chain, opt_type, strike):
     if len(z)==0: return np.nan
     return float(z.iloc[-1].close)
 
-st.title("🤖 ALS AI Algo Trading V14")
+st.title("🤖 ALS AI Algo Trading V14.1")
 st.caption("Index research + Option Strategy Lab • backtest/paper research only • live orders disabled")
 
 tab1,tab2=st.tabs(["📊 Index Research","🧩 Option Strategy Lab"])
@@ -203,7 +205,7 @@ with tab1:
         maxtrades=st.slider("Max trades/day",1,3,2)
         cost=st.number_input("Cost per completed trade (₹)",0,200,20,5)
         slip=st.number_input("Slippage (bps)",0,10,2,1)
-    st.info("V14 keeps the V12 robustness gate. A PASS requires positive out-of-sample expectancy, PF > 1, at least 3 unseen trades, and max DD < 5%.")
+    st.info("V14.1 keeps the V12 robustness gate. A PASS requires positive out-of-sample expectancy, PF > 1, at least 3 unseen trades, and max DD < 5%.")
     if st.button("🚀 Run V14 Index Research",type="primary"):
         all_rows=[]; chosen={}; progress=st.progress(0); families=["TREND","PULLBACK","MOMENTUM","BREAKOUT"]
         for i,(name,ticker) in enumerate(SYMBOLS.items(),1):
@@ -243,7 +245,7 @@ with tab1:
             if len(e): st.line_chart(e.set_index("datetime")[["equity"]])
 
 with tab2:
-    st.warning("Option Strategy Lab is research/paper testing only. V14 adds an NSE contract-data import workflow. The four modules are transparent research templates inspired by the named educational topics; they are NOT claimed to reproduce every rule from the videos verbatim.")
+    st.warning("Option Strategy Lab is research/paper testing only. V14.1 adds an NSE contract-data import workflow. The four modules are transparent research templates inspired by the named educational topics; they are NOT claimed to reproduce every rule from the videos verbatim.")
     st.markdown("### Strategy Library")
     strategy=st.selectbox("Select strategy",[
         "Mukul — Short Straddle",
@@ -264,7 +266,7 @@ with tab2:
     st.write("NSE provides a Historical Contract-wise Price Volume Data report with filters for Instrument, Symbol, Year, Expiry, Option Type and Strike Price, plus CSV download. V14 is designed around that contract-level data. citeturn0search1")
     st.markdown("**NSE workflow:** Historical Contract-wise Price Volume Data → Instrument: Options → Symbol: NIFTY → choose Year/Expiry/Option Type/Strike → download CSV. The app then normalizes the downloaded file.")
     st.markdown("NSE also exposes current option-chain CSV downloads, but current-chain data is not a substitute for historical contract prices when doing a backtest. citeturn0search3")
-    st.download_button("⬇️ Download normalized CSV template",option_template().to_csv(index=False),"option_data_template_v14.csv","text/csv")
+    st.download_button("⬇️ Download normalized CSV template",option_template().to_csv(index=False),"option_data_template_v14_1.csv","text/csv")
     uploaded=st.file_uploader("Upload NSE contract-wise CSV (or normalized CSV)",type=["csv"])
     if uploaded:
         raw=pd.read_csv(uploaded)
@@ -319,7 +321,7 @@ with tab2:
                     st.success(f"Generated {len(out):,} research signals.")
                     st.dataframe(out,use_container_width=True)
                     st.download_button("⬇️ Download option signals",out.to_csv(index=False),
-                                       "option_strategy_signals_v14.csv","text/csv")
+                                       "option_strategy_signals_v14_1.csv","text/csv")
                     st.caption("Signals are research outputs only. This build does not place broker orders.")
 
             st.markdown("### 3) NSE data quality checks")
