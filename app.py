@@ -322,7 +322,7 @@ with tab2:
                                        "option_strategy_signals_v14.csv","text/csv")
                     st.caption("Signals are research outputs only. This build does not place broker orders.")
 
-    st.markdown("### 3) NSE data quality checks")
+            st.markdown("### 3) NSE data quality checks")
             dup=int(opt.duplicated(["datetime","expiry","strike","option_type"]).sum())
             bad_exp=int((opt.expiry<opt.datetime.dt.normalize()).sum())
             q1,q2,q3,q4=st.columns(4)
@@ -332,10 +332,10 @@ with tab2:
             q4.metric("PE rows",int((opt.option_type=="PE").sum()))
             if dup or bad_exp:
                 st.warning("Data quality issues detected. Clean/verify the NSE export before treating results as valid.")
-
+            
             st.markdown("### 4) Rule extraction / validation")
-    st.write("Before calling any module a faithful implementation, compare its exact entry, strike-selection, exit and risk rules with the source video. The app deliberately labels the current four as research templates.")
-    st.write("Next stage: run chronological in-sample → validation → unseen tests on the imported NSE contract history, with brokerage, slippage, max-loss and expiry-aware position handling.")
+            st.write("Before calling any module a faithful implementation, compare its exact entry, strike-selection, exit and risk rules with the source video. The app deliberately labels the current four as research templates.")
+            st.write("Next stage: run chronological in-sample → validation → unseen tests on the imported NSE contract history, with brokerage, slippage, max-loss and expiry-aware position handling.")
 
 st.divider()
 st.caption("Research/paper-trading only. No profit guarantee. Live orders are disabled.")
