@@ -152,3 +152,214 @@ def normalize_nse_option_data(df):
     out = out.rename(columns=rename_map)
 
     # Common NSE column aliases
+    aliases = {
+        "date": ["date", "trade_date"],
+        "expiry": ["expiry", "expiry_date"],
+        "strike": ["strike_price", "strike"],
+        "option_type": ["option_type", "opt_type"],
+        "open": ["open", "open_price"],
+        "high": ["high", "high_price"],
+        "low": ["low", "low_price"],
+        "close": ["close", "close_price"],
+        "ltp": ["ltp", "last_price"],
+        "volume": ["volume", "no_of_contracts"],
+        "oi": ["open_interest", "oi"],
+    }
+
+    for standard_name, candidates in aliases.items():
+        for candidate in candidates:
+            if candidate in out.columns:
+                if standard_name not in out.columns:
+                    out[standard_name] = out[candidate]
+                break
+
+    if "date" in out.columns:
+        out["date"] = pd.to_datetime(
+            out["date"],
+            errors="coerce",
+            dayfirst=True,
+        )
+
+    numeric_columns = [
+        "strike",
+        "open",
+        "high",
+        "low",
+        "close",
+        "ltp",
+        "volume",
+        "oi",
+    ]
+
+    for col in numeric_columns:
+        if col in out.columns:
+            out[col] = pd.to_numeric(
+                out[col],
+                errors="coerce",
+            )
+
+    if "date" in out.columns:
+        out = out.dropna(subset=["date"])
+        out = out.sort_values("date")
+
+    return out.reset_index(drop=True)
+
+
+def get_available_expiries(
+    symbol="NIFTY",
+    from_date=None,
+    to_date=None,
+):
+    if from_date is None:
+        from_date = (
+            datetime.now() - timedelta(days=90)
+        ).strftime("%d-%m-%Y")
+
+    if to_date is None:
+        to_date = datetime.now().strftime("%d-%m-%Y")
+
+    session = create_nse_session()
+
+    url = f"{NSE_BASE}/api/historical/foCPV"
+
+    params = {
+        "from": from_date,
+        "to": to_date,
+        "instrumentType": "OPTIDX",
+        "symbol": symbol,
+    }
+
+    response = session.get(
+        url,
+        params=params,
+        timeout=30,
+    )
+
+    if response.status_code != 200:
+        raise RuntimeError(
+            f"NSE request failed: HTTP {response.status_code}"
+        )
+
+    data = response.json()
+    records = data.get("data", [])
+
+    if not records:
+        return []
+
+    df = pd.DataFrame(records)
+
+    if "FH_EXPIRY_DT" in df.columns:
+        values = df["FH_EXPIRY_DT"]
+    elif "expiryDate" in df.columns:
+        values = df["expiryDate"]
+    elif "expiry" in df.columns:
+        values = df["expiry"]
+    else:
+        return []
+
+    expiries = (
+        pd.to_datetime(
+            values,
+            errors="coerce",
+            dayfirst=True,
+        )
+        .dropna()
+        .dt.strftime("%d-%b-%Y")
+        .unique()
+        .tolist()
+    )
+
+    return sorted(expiries)
+
+
+def download_option_pair(
+    symbol,
+    expiry_date,
+    strike_price,
+    from_date,
+    to_date,
+):
+    ce = fetch_nse_option_history(
+        symbol=symbol,
+        expiry_date=expiry_date,
+        option_type="CE",
+        strike_price=strike_price,
+        from_date=from_date,
+        to_date=to_date,
+    )
+
+    pe = fetch_nse_option_history(
+        symbol=symbol,
+        expiry_date=expiry_date,
+        option_type="PE",
+        strike_price=strike_price,
+        from_date=from_date,
+        to_date=to_date,
+    )
+
+    return {
+        "CE": ce,
+        "PE": pe,
+    }
+
+
+def prepare_straddle_dataframe(ce_df, pe_df):
+    if ce_df is None or pe_df is None:
+        return pd.DataFrame()
+
+    if ce_df.empty or pe_df.empty:
+        return pd.DataFrame()
+
+    if "date" not in ce_df.columns:
+        return pd.DataFrame()
+
+    if "date" not in pe_df.columns:
+        return pd.DataFrame()
+
+    ce_price_col = (
+        "close"
+        if "close" in ce_df.columns
+        else "ltp"
+        if "ltp" in ce_df.columns
+        else None
+    )
+
+    pe_price_col = (
+        "close"
+        if "close" in pe_df.columns
+        else "ltp"
+        if "ltp" in pe_df.columns
+        else None
+    )
+
+    if ce_price_col is None or pe_price_col is None:
+        return pd.DataFrame()
+
+    ce = ce_df[
+        ["date", ce_price_col]
+    ].rename(
+        columns={ce_price_col: "CE_PRICE"}
+    )
+
+    pe = pe_df[
+        ["date", pe_price_col]
+    ].rename(
+        columns={pe_price_col: "PE_PRICE"}
+    )
+
+    merged = pd.merge(
+        ce,
+        pe,
+        on="date",
+        how="inner",
+    )
+
+    if merged.empty:
+        return merged
+
+    merged["STRADDLE_PRICE"] = (
+        merged["CE_PRICE"] +
+        merged["PE_PRICE"]
+    )
+
+    return merged.sort_values("date").reset_index(drop=True)
