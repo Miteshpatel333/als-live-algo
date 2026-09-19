@@ -271,7 +271,93 @@ with tab2:
     st.write("એક સાથે ઘણી NSE CE CSV અને ઘણી matching PE CSV files upload કરી શકો છો.")
     ce_files=st.file_uploader("NIFTY CE CSV files upload કરો",type=["csv"],accept_multiple_files=True,key="ce_v144")
     pe_files=st.file_uploader("Matching NIFTY PE CSV files upload કરો",type=["csv"],accept_multiple_files=True,key="pe_v144")
+    st.markdown("### ⚡ Automatic NSE Option Data")
 
+    n1, n2, n3 = st.columns(3)
+
+    auto_symbol = n1.selectbox(
+        "Symbol",
+        ["NIFTY", "BANKNIFTY"],
+        key="auto_symbol"
+    )
+
+    auto_strike = n2.number_input(
+        "Strike Price",
+        min_value=1,
+        value=23350,
+        step=50,
+        key="auto_strike"
+    )
+
+    auto_expiry = n3.date_input(
+        "Expiry",
+        value=pd.Timestamp("2026-09-22"),
+        key="auto_expiry"
+    )
+
+    d1, d2 = st.columns(2)
+
+    auto_from = d1.date_input(
+        "From Date",
+        value=pd.Timestamp("2026-08-01"),
+        key="auto_from"
+    )
+
+    auto_to = d2.date_input(
+        "To Date",
+        value=pd.Timestamp("2026-09-18"),
+        key="auto_to"
+    )
+
+    if st.button(
+        "🌐 Fetch NSE CE + PE",
+        type="primary",
+        key="auto_nse_fetch"
+    ):
+        try:
+            with st.spinner("NSE data fetch થઈ રહ્યો છે..."):
+                pair = download_option_pair(
+                    symbol=auto_symbol,
+                    expiry_date=auto_expiry.strftime("%d-%b-%Y"),
+                    strike_price=float(auto_strike),
+                    from_date=auto_from.strftime("%d-%m-%Y"),
+                    to_date=auto_to.strftime("%d-%m-%Y"),
+                )
+
+            ce_auto = pair.get("CE", pd.DataFrame())
+            pe_auto = pair.get("PE", pd.DataFrame())
+
+            st.success("NSE fetch request complete.")
+
+            a, b = st.columns(2)
+            a.metric("CE Rows", f"{len(ce_auto):,}")
+            b.metric("PE Rows", f"{len(pe_auto):,}")
+
+            if len(ce_auto) and len(pe_auto):
+                auto_straddle = prepare_straddle_dataframe(
+                    ce_auto,
+                    pe_auto
+                )
+
+                if len(auto_straddle):
+                    st.subheader("Automatic NSE Straddle Data")
+                    st.dataframe(
+                        auto_straddle,
+                        use_container_width=True
+                    )
+                else:
+                    st.warning(
+                        "CE અને PE માટે common dates મળ્યા નથી."
+                    )
+            else:
+                st.warning(
+                    "NSE એ CE અથવા PE data આપ્યો નથી."
+                )
+
+        except Exception as e:
+            st.error(
+                f"NSE automatic fetch failed: {e}"
+        )
     def normalize_nse_v144(df):
         x=df.copy()
         x.columns=[str(c).strip().lower().replace(" ","_") for c in x.columns]
